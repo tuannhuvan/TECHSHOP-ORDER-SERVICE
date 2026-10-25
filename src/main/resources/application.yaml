@@ -1,0 +1,52 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: techshop-order-service
+  datasource:
+    url: jdbc:h2:mem:techshopdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+  docker:
+    compose:
+      enabled: false
+  mvc:
+    problemdetails:
+      enabled: true
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 5MB
+
+app:
+  api:
+    version: 1.0.0
+    server-url: http://localhost:8080
+  jwt:
+    secret: techshop-order-service-very-secure-secret-key-for-hmac-sha256-at-least-256-bits-long
+  partner:
+    api-key: techshop-partner-shipping-secret-key-2026
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+    version: openapi_3_1
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
+    display-request-duration: true
+    try-it-out-enabled: true
+    default-produces-media-type: application/json
+  override-with-generic-response: false

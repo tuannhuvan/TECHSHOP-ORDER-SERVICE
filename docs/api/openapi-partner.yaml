@@ -1,0 +1,148 @@
+openapi: 3.1.0
+info:
+  title: TechShop Order Service API
+  description: "Microservice quản lý toàn bộ quy trình đặt hàng, thanh toán, vận chuyể\
+    n và báo cáo doanh thu cho TechShop."
+  contact:
+    name: TechShop Architecture Team
+    email: architecture@techshop.vn
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+  version: 1.0.0
+externalDocs:
+  description: Tài liệu kiến trúc hệ thống TechShop
+  url: https://docs.techshop.vn/architecture
+servers:
+- url: http://localhost:8080
+  description: Môi trường hiện tại
+security:
+- bearerAuth: []
+- partnerKey: []
+tags:
+- name: Shipping Partner
+  description: Webhook tiếp nhận thông tin từ các đối tác giao hàng
+paths:
+  /api/webhooks/shipping:
+    post:
+      tags:
+      - Shipping Partner
+      summary: Webhook cập nhật trạng thái giao hàng
+      description: "Đối tác vận chuyển (Viettel Post, GHTK, GHN...) gọi Webhook để\
+        \ cập nhật tình trạng giao hàng (SHIP, DELIVER, FAIL_DELIVERY). Xác thực bằ\
+        ng Header X-Partner-Key."
+      operationId: handleShippingWebhook
+      parameters:
+      - name: X-Partner-Key
+        in: header
+        description: Khóa bí mật do TechShop cấp cho đối tác
+        required: true
+        schema:
+          type: string
+        example: techshop-partner-shipping-secret-key-2026
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShippingWebhookRequest"
+        required: true
+      responses:
+        "200":
+          description: Đã cập nhật trạng thái thành công
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookResponse"
+        "401":
+          description: Header X-Partner-Key không chính xác
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookResponse"
+        "409":
+          description: Trạng thái đơn hàng không phù hợp với hành động vận chuyển
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookResponse"
+      security:
+      - partnerKey: []
+components:
+  schemas:
+    ShippingWebhookRequest:
+      type: object
+      description: Payload cập nhật tình trạng giao hàng từ đối tác vận chuyển
+      properties:
+        orderCode:
+          type: string
+          description: Mã đơn hàng
+          example: ORD-2026-000123
+          minLength: 1
+        action:
+          type: string
+          description: "Hành động vận chuyển từ đối tác (SHIP, DELIVER, FAIL_DELIVERY)"
+          enum:
+          - SHIP
+          - DELIVER
+          - FAIL_DELIVERY
+          example: DELIVER
+        reason:
+          type: string
+          description: Lý do cập nhật (áp dụng khi FAIL_DELIVERY)
+          example: Không liên lạc được với khách hàng sau 3 lần gọi
+          maxLength: 500
+          minLength: 0
+        partnerNotes:
+          type: string
+          description: Ghi chú từ đối tác vận chuyển
+          example: "Bưu tá: Nguyễn Văn A - SĐT: 0912345678"
+          maxLength: 500
+          minLength: 0
+      required:
+      - action
+      - orderCode
+    WebhookResponse:
+      type: object
+      description: Kết quả phản hồi xử lý webhook vận chuyển
+      properties:
+        success:
+          type: boolean
+          description: Trạng thái xử lý thành công
+          example: true
+        orderCode:
+          type: string
+          description: Mã đơn hàng
+          example: ORD-2026-000123
+        status:
+          type: string
+          description: Trạng thái mới của đơn sau khi cập nhật
+          enum:
+          - PENDING
+          - CONFIRMED
+          - SHIPPING
+          - DELIVERED
+          - CANCELLED
+          - RETURN_REQUESTED
+          - RETURNED
+          example: DELIVERED
+        message:
+          type: string
+          description: Thông báo kết quả
+          example: Đã cập nhật trạng thái đơn hàng thành công
+        processedAt:
+          type: string
+          format: date-time
+          description: Thời điểm xử lý
+          example: 2026-10-25T11:30:00Z
+  securitySchemes:
+    bearerAuth:
+      type: http
+      description: "Nhập Bearer JWT token dành cho CUSTOMER hoặc ADMIN (ví dụ: dev-customer-token,\
+        \ dev-admin-token)"
+      scheme: bearer
+      bearerFormat: JWT
+    partnerKey:
+      type: apiKey
+      description: "API Key header dành cho đối tác vận chuyển (mặc định: techshop-partner-shipping-secret-key-2026)"
+      name: X-Partner-Key
+      in: header

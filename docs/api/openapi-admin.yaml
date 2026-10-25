@@ -1,0 +1,450 @@
+openapi: 3.1.0
+info:
+  title: TechShop Order Service API
+  description: "Microservice quản lý toàn bộ quy trình đặt hàng, thanh toán, vận chuyể\
+    n và báo cáo doanh thu cho TechShop."
+  contact:
+    name: TechShop Architecture Team
+    email: architecture@techshop.vn
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+  version: 1.0.0
+externalDocs:
+  description: Tài liệu kiến trúc hệ thống TechShop
+  url: https://docs.techshop.vn/architecture
+servers:
+- url: http://localhost:8080
+  description: Môi trường hiện tại
+security:
+- bearerAuth: []
+- partnerKey: []
+tags:
+- name: Orders
+  description: "Quản lý vòng đời đơn hàng, chuyển trạng thái và hóa đơn"
+- name: Admin Reports
+  description: Báo cáo doanh thu và phân tích thống kê đơn hàng dành cho quản trị
+    viên
+paths:
+  /api/orders/{code}/transitions:
+    post:
+      tags:
+      - Orders
+      summary: Thực hiện hành động chuyển trạng thái đơn hàng
+      description: "Thực thi chuyển trạng thái theo máy trạng thái 7 trạng thái, 8\
+        \ hành động. Yêu cầu Header If-Match mang version hiện tại của đơn hàng (Optimistic\
+        \ Locking BR-06)."
+      operationId: transitionOrder
+      parameters:
+      - name: If-Match
+        in: header
+        description: "Version hiện tại của đơn hàng từ ETag (ví dụ: \"0\" hoặc \"\
+          1\")"
+        required: true
+        schema:
+          type: string
+        example: "0"
+      - name: code
+        in: path
+        description: Mã đơn hàng
+        required: true
+        schema:
+          type: string
+        example: ORD-2026-000101
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransitionRequest"
+        required: true
+      responses:
+        "200":
+          description: Chuyển trạng thái đơn hàng thành công
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderResponseV2"
+        "400":
+          description: Lý do thiếu khi hủy đơn CONFIRMED hoặc vi phạm điều kiện 7
+            ngày trả hàng
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderResponseV2"
+        "409":
+          description: Chuyển trạng thái không hợp lệ (mã lỗi ORDER_INVALID_TRANSITION)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderResponseV2"
+        "412":
+          description: Header If-Match không khớp với version hiện tại (Precondition
+            Failed)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderResponseV2"
+      security:
+      - bearerAuth: []
+  /api/orders/{code}/invoice:
+    get:
+      tags:
+      - Orders
+      summary: Tải về hóa đơn bán lẻ PDF
+      description: Khách hàng hoặc quản trị viên tải về bản PDF hóa đơn của đơn hàng.
+      operationId: getInvoicePdf
+      parameters:
+      - name: code
+        in: path
+        description: Mã đơn hàng
+        required: true
+        schema:
+          type: string
+        example: ORD-2026-000101
+      responses:
+        "200":
+          description: File PDF hóa đơn
+          content:
+            application/pdf: {}
+        "404":
+          description: Không tìm thấy đơn hàng
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: byte
+      security:
+      - bearerAuth: []
+    post:
+      tags:
+      - Orders
+      summary: Tải lên hóa đơn bán lẻ PDF (Admin)
+      description: Quản trị viên tải lên file PDF hóa đơn kèm theo đơn hàng (dung
+        lượng <= 5MB).
+      operationId: uploadInvoice
+      parameters:
+      - name: code
+        in: path
+        description: Mã đơn hàng
+        required: true
+        schema:
+          type: string
+        example: ORD-2026-000101
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required:
+              - file
+      responses:
+        "200":
+          description: Tải lên hóa đơn thành công
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvoiceResponse"
+        "400":
+          description: Tệp không hợp lệ hoặc vượt quá 5MB
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvoiceResponse"
+        "404":
+          description: Không tìm thấy đơn hàng
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvoiceResponse"
+      security:
+      - bearerAuth: []
+  /api/admin/reports/daily-revenue:
+    get:
+      tags:
+      - Admin Reports
+      summary: Báo cáo doanh thu đơn hàng theo ngày
+      description: Tổng hợp doanh thu và số lượng đơn hàng theo từng ngày trong khoảng
+        thời gian xác định (loại trừ các đơn CANCELLED). Yêu cầu quyền ADMIN.
+      operationId: getDailyRevenueReport
+      parameters:
+      - name: from
+        in: query
+        description: Từ ngày định dạng YYYY-MM-DD
+        required: false
+        schema:
+          type: string
+        example: 2026-10-01
+      - name: to
+        in: query
+        description: Đến ngày định dạng YYYY-MM-DD
+        required: false
+        schema:
+          type: string
+        example: 2026-10-25
+      responses:
+        "200":
+          description: Báo cáo doanh thu tổng hợp thành công
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DailyRevenueReport"
+        "401":
+          description: Chưa đăng nhập / Token thiếu
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DailyRevenueReport"
+        "403":
+          description: Không có quyền ADMIN
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DailyRevenueReport"
+      security:
+      - bearerAuth: []
+components:
+  schemas:
+    TransitionRequest:
+      type: object
+      description: Yêu cầu thực hiện hành động chuyển trạng thái đơn hàng
+      properties:
+        action:
+          type: string
+          description: "Hành động chuyển trạng thái được phép theo ma trận phân quyề\
+            n: CONFIRM (ADMIN), CANCEL (CUSTOMER/ADMIN), SHIP (ADMIN/PARTNER), DELIVER\
+            \ (PARTNER), FAIL_DELIVERY (PARTNER), REQUEST_RETURN (CUSTOMER <= 7 ngà\
+            y), ACCEPT_RETURN (ADMIN)"
+          enum:
+          - CONFIRM
+          - CANCEL
+          - SHIP
+          - DELIVER
+          - FAIL_DELIVERY
+          - REQUEST_RETURN
+          - ACCEPT_RETURN
+          example: CONFIRM
+        reason:
+          type: string
+          description: Lý do chuyển trạng thái (bắt buộc đối với hành động CANCEL
+            khi đơn ở trạng thái CONFIRMED)
+          example: Khách hàng đổi ý mua sản phẩm khác
+          maxLength: 500
+          minLength: 0
+      required:
+      - action
+    MoneyResponse:
+      type: object
+      description: Giá trị tiền tệ đa quốc gia
+      properties:
+        value:
+          type: number
+          description: Giá trị số tiền
+          example: 1590000.0
+        currency:
+          type: string
+          description: Mã tiền tệ ISO 4217
+          example: VND
+    OrderItemResponse:
+      type: object
+      description: Chi tiết mặt hàng trong đơn hàng
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Mã dòng chi tiết
+          example: 1
+        productId:
+          type: integer
+          format: int64
+          description: Mã sản phẩm
+          example: 1
+        productName:
+          type: string
+          description: Tên sản phẩm snapshot tại thời điểm đặt
+          example: Bàn phím cơ K8 Pro
+        unitPrice:
+          type: number
+          description: Đơn giá snapshot tại thời điểm đặt (VND)
+          example: 1590000.0
+        quantity:
+          type: integer
+          format: int32
+          description: Số lượng mua
+          example: 1
+        lineTotal:
+          type: number
+          description: Thành tiền của dòng sản phẩm (VND)
+          example: 1590000.0
+    OrderResponseV2:
+      type: object
+      description: Thông tin chi tiết đơn hàng (Public Spec V2 - Chuẩn hóa tiền tệ
+        đa quốc gia)
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: ID nội bộ
+          example: 1
+        code:
+          type: string
+          description: Mã đơn hàng định dạng nghiệp vụ
+          example: ORD-2026-000123
+        customerId:
+          type: integer
+          format: int64
+          description: ID khách hàng
+          example: 1
+        status:
+          type: string
+          description: Trạng thái đơn hàng
+          enum:
+          - PENDING
+          - CONFIRMED
+          - SHIPPING
+          - DELIVERED
+          - CANCELLED
+          - RETURN_REQUESTED
+          - RETURNED
+          example: CONFIRMED
+        shippingAddress:
+          type: string
+          description: Địa chỉ nhận hàng
+          example: "Toà nhà FPT, Cầu Giấy, Hà Nội"
+        total:
+          $ref: "#/components/schemas/MoneyResponse"
+          description: Tổng tiền đơn hàng kèm đơn vị tiền tệ
+        payment:
+          $ref: "#/components/schemas/PaymentResponse"
+          description: Thông tin thanh toán
+        items:
+          type: array
+          description: Danh sách sản phẩm trong đơn
+          items:
+            $ref: "#/components/schemas/OrderItemResponse"
+        version:
+          type: integer
+          format: int64
+          description: Phiên bản đơn hàng (phục vụ ETag & If-Match)
+          example: 0
+        deliveredAt:
+          type: string
+          format: date-time
+          description: Thời điểm giao hàng thành công (nếu có)
+        createdAt:
+          type: string
+          format: date-time
+          description: Thời điểm tạo đơn
+          example: 2026-10-25T10:00:00Z
+        updatedAt:
+          type: string
+          format: date-time
+          description: Thời điểm cập nhật gần nhất
+          example: 2026-10-25T10:05:00Z
+    PaymentResponse:
+      type: object
+      description: Thông tin thanh toán của đơn hàng
+      properties:
+        method:
+          type: string
+          description: Phương thức thanh toán
+          enum:
+          - COD
+          - CARD
+          - BANK_TRANSFER
+          example: COD
+        cardProvider:
+          type: string
+          description: Đơn vị cung cấp thẻ
+          example: Visa
+        cardLast4:
+          type: string
+          description: 4 chữ số cuối của thẻ
+          example: "4242"
+        bankCode:
+          type: string
+          description: Mã ngân hàng
+          example: VCB
+        transferRef:
+          type: string
+          description: Mã tham chiếu giao dịch
+          example: REF-20261025-001
+    InvoiceResponse:
+      type: object
+      description: Kết quả tải lên hóa đơn PDF
+      properties:
+        orderCode:
+          type: string
+          description: Mã đơn hàng
+          example: ORD-2026-000123
+        fileName:
+          type: string
+          description: Tên tập tin hóa đơn
+          example: invoice-ORD-2026-000123.pdf
+        fileSize:
+          type: integer
+          format: int64
+          description: Dung lượng tập tin (bytes)
+          example: 204850
+        uploadedAt:
+          type: string
+          format: date-time
+          description: Thời điểm tải lên
+          example: 2026-10-25T11:00:00Z
+    DailyRevenueItem:
+      type: object
+      properties:
+        date:
+          type: string
+          description: Ngày thống kê (YYYY-MM-DD)
+          example: 2026-10-25
+        orderCount:
+          type: integer
+          format: int64
+          description: Số lượng đơn trong ngày
+          example: 5
+        revenue:
+          type: number
+          description: Doanh thu trong ngày (VND)
+          example: 1.25E7
+    DailyRevenueReport:
+      type: object
+      description: Báo cáo doanh thu theo ngày của TechShop
+      properties:
+        from:
+          type: string
+          description: Từ ngày (YYYY-MM-DD)
+          example: 2026-10-01
+        to:
+          type: string
+          description: Đến ngày (YYYY-MM-DD)
+          example: 2026-10-25
+        totalRevenue:
+          type: number
+          description: Tổng doanh thu trong khoảng thời gian (VND)
+          example: 5.849E7
+        totalOrders:
+          type: integer
+          format: int64
+          description: Tổng số lượng đơn hàng phát sinh
+          example: 24
+        items:
+          type: array
+          description: Chi tiết doanh thu từng ngày
+          items:
+            $ref: "#/components/schemas/DailyRevenueItem"
+  securitySchemes:
+    bearerAuth:
+      type: http
+      description: "Nhập Bearer JWT token dành cho CUSTOMER hoặc ADMIN (ví dụ: dev-customer-token,\
+        \ dev-admin-token)"
+      scheme: bearer
+      bearerFormat: JWT
+    partnerKey:
+      type: apiKey
+      description: "API Key header dành cho đối tác vận chuyển (mặc định: techshop-partner-shipping-secret-key-2026)"
+      name: X-Partner-Key
+      in: header

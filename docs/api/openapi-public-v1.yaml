@@ -1,0 +1,893 @@
+openapi: 3.1.0
+info:
+  title: TechShop Order Service API
+  description: "Microservice quản lý toàn bộ quy trình đặt hàng, thanh toán, vận chuyể\
+    n và báo cáo doanh thu cho TechShop."
+  contact:
+    name: TechShop Architecture Team
+    email: architecture@techshop.vn
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+  version: 1.0.0
+externalDocs:
+  description: Tài liệu kiến trúc hệ thống TechShop
+  url: https://docs.techshop.vn/architecture
+servers:
+- url: http://localhost:8080
+  description: Môi trường hiện tại
+security:
+- bearerAuth: []
+- partnerKey: []
+tags:
+- name: Orders
+  description: "Quản lý vòng đời đơn hàng, chuyển trạng thái và hóa đơn"
+paths:
+  /api/orders:
+    get:
+      tags:
+      - Orders
+      summary: Tra cứu và phân trang danh sách đơn hàng
+      description: "Lấy danh sách đơn hàng theo bộ lọc phân trang, trạng thái, khoả\
+        ng thời gian và tổng tiền (D4 pagination envelope). Khách hàng chỉ xem đượ\
+        c đơn của mình."
+      operationId: getOrders
+      parameters:
+      - name: status
+        in: query
+        description: Lọc theo trạng thái đơn hàng
+        required: false
+        schema:
+          type: string
+          enum:
+          - PENDING
+          - CONFIRMED
+          - SHIPPING
+          - DELIVERED
+          - CANCELLED
+          - RETURN_REQUESTED
+          - RETURNED
+      - name: from
+        in: query
+        description: Từ ngày (ISO Instant)
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        description: Đến ngày (ISO Instant)
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: minTotal
+        in: query
+        description: Tổng tiền tối thiểu (VND)
+        required: false
+        schema:
+          type: number
+      - name: page
+        in: query
+        description: Chỉ số trang (0-indexed)
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 0
+      - name: size
+        in: query
+        description: Số lượng bản ghi mỗi trang
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 10
+      - name: sort
+        in: query
+        description: "Trường sắp xếp (createdAt, totalAmount, status)"
+        required: false
+        schema:
+          type: string
+          default: "createdAt,desc"
+      responses:
+        "200":
+          description: Truy vấn danh sách đơn hàng thành công
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageResponseOrderResponseV2"
+        "401":
+          description: Chưa xác thực hoặc token không hợp lệ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageResponseOrderResponseV2"
+      security:
+      - bearerAuth: []
+    post:
+      tags:
+      - Orders
+      summary: Tạo đơn hàng mới
+      description: "Tạo đơn hàng mới cho khách hàng. Yêu cầu Header Idempotency-Key\
+        \ để bảo đảm tính duy nhất và tính giá phía server (BR-01, BR-02, BR-03)."
+      operationId: createOrder
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        description: "Khóa Idempotency duy nhất đại diện cho giao dịch tạo đơn (ví\
+          \ dụ: UUID)"
+        required: true
+        schema:
+          type: string
+        example: 9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d
+      requestBody:
+        description: Dữ liệu tạo đơn hàng
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderRequest"
+            examples:
+              "1. Đặt hàng thanh toán COD":
+                summary: Đơn hàng COD thông thường
+                description: 1. Đặt hàng thanh toán COD
+                value:
+                  customerId: 1
+                  shippingAddress: "Số 8 Tôn Thất Thuyết, Cầu Giấy, Hà Nội"
+                  items:
+                  - productId: 1
+                    quantity: 1
+                  - productId: 2
+                    quantity: 1
+                  payment:
+                    method: COD
+              "2. Đặt hàng thanh toán Thẻ CARD":
+                summary: Đơn hàng thanh toán qua Thẻ tín dụng/ghi nợ
+                description: 2. Đặt hàng thanh toán Thẻ CARD
+                value:
+                  customerId: 1
+                  shippingAddress: "Toà Landmark 81, Bình Thạnh, TP.HCM"
+                  items:
+                  - productId: 3
+                    quantity: 2
+                  payment:
+                    method: CARD
+                    cardProvider: Visa
+                    cardLast4: "4242"
+        required: true
+      responses:
+        "201":
+          description: Đơn hàng đã được tạo thành công
+          headers:
+            Location:
+              description: URI trỏ tới tài nguyên đơn hàng vừa tạo
+              style: simple
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderResponseV2"
+        "400":
+          description: Dữ liệu đầu vào vi phạm validation hoặc trùng productId
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiProblem"
+        "409":
+          description: Xung đột Idempotency Key (cùng key nhưng khác nội dung body)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiProblem"
+      security:
+      - bearerAuth: []
+  /api/orders/{code}/transitions:
+    post:
+      tags:
+      - Orders
+      summary: Thực hiện hành động chuyển trạng thái đơn hàng
+      description: "Thực thi chuyển trạng thái theo máy trạng thái 7 trạng thái, 8\
+        \ hành động. Yêu cầu Header If-Match mang version hiện tại của đơn hàng (Optimistic\
+        \ Locking BR-06)."
+      operationId: transitionOrder
+      parameters:
+      - name: If-Match
+        in: header
+        description: "Version hiện tại của đơn hàng từ ETag (ví dụ: \"0\" hoặc \"\
+          1\")"
+        required: true
+        schema:
+          type: string
+        example: "0"
+      - name: code
+        in: path
+        description: Mã đơn hàng
+        required: true
+        schema:
+          type: string
+        example: ORD-2026-000101
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransitionRequest"
+        required: true
+      responses:
+        "200":
+          description: Chuyển trạng thái đơn hàng thành công
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderResponseV2"
+        "400":
+          description: Lý do thiếu khi hủy đơn CONFIRMED hoặc vi phạm điều kiện 7
+            ngày trả hàng
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderResponseV2"
+        "409":
+          description: Chuyển trạng thái không hợp lệ (mã lỗi ORDER_INVALID_TRANSITION)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderResponseV2"
+        "412":
+          description: Header If-Match không khớp với version hiện tại (Precondition
+            Failed)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderResponseV2"
+      security:
+      - bearerAuth: []
+  /api/orders/{code}/invoice:
+    get:
+      tags:
+      - Orders
+      summary: Tải về hóa đơn bán lẻ PDF
+      description: Khách hàng hoặc quản trị viên tải về bản PDF hóa đơn của đơn hàng.
+      operationId: getInvoicePdf
+      parameters:
+      - name: code
+        in: path
+        description: Mã đơn hàng
+        required: true
+        schema:
+          type: string
+        example: ORD-2026-000101
+      responses:
+        "200":
+          description: File PDF hóa đơn
+          content:
+            application/pdf: {}
+        "404":
+          description: Không tìm thấy đơn hàng
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: byte
+      security:
+      - bearerAuth: []
+    post:
+      tags:
+      - Orders
+      summary: Tải lên hóa đơn bán lẻ PDF (Admin)
+      description: Quản trị viên tải lên file PDF hóa đơn kèm theo đơn hàng (dung
+        lượng <= 5MB).
+      operationId: uploadInvoice
+      parameters:
+      - name: code
+        in: path
+        description: Mã đơn hàng
+        required: true
+        schema:
+          type: string
+        example: ORD-2026-000101
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required:
+              - file
+      responses:
+        "200":
+          description: Tải lên hóa đơn thành công
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvoiceResponse"
+        "400":
+          description: Tệp không hợp lệ hoặc vượt quá 5MB
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvoiceResponse"
+        "404":
+          description: Không tìm thấy đơn hàng
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvoiceResponse"
+      security:
+      - bearerAuth: []
+  /api/v1/orders/{code}:
+    get:
+      tags:
+      - Orders
+      summary: Xem chi tiết đơn hàng (Spec v1 - Deprecated)
+      description: Endpoint kế thừa phiên bản cũ v1 trả về trường `totalAmount` dạng
+        số. Được đánh dấu Deprecated.
+      operationId: getOrderByCodeV1
+      parameters:
+      - name: code
+        in: path
+        description: Mã đơn hàng
+        required: true
+        schema:
+          type: string
+        example: ORD-2026-000101
+      responses:
+        "200":
+          description: Tìm thấy đơn hàng dạng v1
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderResponseV1"
+        "404":
+          description: Đơn hàng không tồn tại
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderResponseV1"
+      deprecated: true
+      security:
+      - bearerAuth: []
+  /api/orders/{code}:
+    get:
+      tags:
+      - Orders
+      summary: Xem chi tiết đơn hàng (Spec v2 chuẩn)
+      description: "Trả về thông tin chi tiết đơn hàng với trường tổng tiền chuẩn\
+        \ đa tiền tệ `total: {value, currency}`."
+      operationId: getOrderByCode
+      parameters:
+      - name: code
+        in: path
+        description: Mã đơn hàng
+        required: true
+        schema:
+          type: string
+        example: ORD-2026-000101
+      responses:
+        "200":
+          description: Tìm thấy đơn hàng
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderResponseV2"
+        "404":
+          description: Đơn hàng không tồn tại
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ApiProblem"
+      security:
+      - bearerAuth: []
+  /api/orders/{code}/events:
+    get:
+      tags:
+      - Orders
+      summary: Xem lịch sử nhật ký kiểm toán (Audit Trail) của đơn hàng
+      description: Xem danh sách các sự kiện chuyển trạng thái trong suốt vòng đời
+        của đơn hàng.
+      operationId: getOrderEvents
+      parameters:
+      - name: code
+        in: path
+        description: Mã đơn hàng
+        required: true
+        schema:
+          type: string
+        example: ORD-2026-000101
+      responses:
+        "200":
+          description: Danh sách sự kiện chuyển trạng thái
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OrderEventResponse"
+      security:
+      - bearerAuth: []
+components:
+  schemas:
+    OrderItemRequest:
+      type: object
+      description: Yêu cầu dòng sản phẩm trong đơn hàng
+      properties:
+        productId:
+          type: integer
+          format: int64
+          description: Mã định danh sản phẩm
+          example: 1
+        quantity:
+          type: integer
+          format: int32
+          description: Số lượng đặt hàng (1 đến 20)
+          example: 2
+          maximum: 20
+          minimum: 1
+      required:
+      - productId
+      - quantity
+    OrderRequest:
+      type: object
+      description: Dữ liệu yêu cầu đặt hàng mới
+      properties:
+        customerId:
+          type: integer
+          format: int64
+          description: Mã định danh khách hàng
+          example: 1
+        shippingAddress:
+          type: string
+          description: Địa chỉ nhận hàng
+          example: "Toà nhà FPT, Số 8 Tôn Thất Thuyết, Cầu Giấy, Hà Nội"
+          maxLength: 500
+          minLength: 0
+        items:
+          type: array
+          description: Danh sách sản phẩm đặt mua (1 đến 50 dòng sản phẩm)
+          items:
+            $ref: "#/components/schemas/OrderItemRequest"
+          maxItems: 50
+          minItems: 1
+        payment:
+          $ref: "#/components/schemas/PaymentRequest"
+          description: Thông tin phương thức thanh toán
+      required:
+      - customerId
+      - items
+      - payment
+      - shippingAddress
+    PaymentRequest:
+      type: object
+      description: "Thông tin phương thức thanh toán đa hình (COD, CARD, BANK_TRANSFER)"
+      properties:
+        method:
+          type: string
+          description: Phương thức thanh toán
+          enum:
+          - COD
+          - CARD
+          - BANK_TRANSFER
+          example: COD
+        cardProvider:
+          type: string
+          description: Đơn vị phát hành thẻ (áp dụng cho CARD)
+          example: Visa
+          maxLength: 50
+          minLength: 0
+        cardLast4:
+          type: string
+          description: 4 số cuối của thẻ (áp dụng cho CARD)
+          example: "4242"
+          pattern: "^$|^[0-9]{4}$"
+        bankCode:
+          type: string
+          description: Mã ngân hàng (áp dụng cho BANK_TRANSFER)
+          example: VCB
+          maxLength: 20
+          minLength: 0
+        transferRef:
+          type: string
+          description: Mã tham chiếu chuyển khoản (áp dụng cho BANK_TRANSFER)
+          example: REF-20261025-001
+          maxLength: 100
+          minLength: 0
+      required:
+      - method
+    MoneyResponse:
+      type: object
+      description: Giá trị tiền tệ đa quốc gia
+      properties:
+        value:
+          type: number
+          description: Giá trị số tiền
+          example: 1590000.0
+        currency:
+          type: string
+          description: Mã tiền tệ ISO 4217
+          example: VND
+    OrderItemResponse:
+      type: object
+      description: Chi tiết mặt hàng trong đơn hàng
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Mã dòng chi tiết
+          example: 1
+        productId:
+          type: integer
+          format: int64
+          description: Mã sản phẩm
+          example: 1
+        productName:
+          type: string
+          description: Tên sản phẩm snapshot tại thời điểm đặt
+          example: Bàn phím cơ K8 Pro
+        unitPrice:
+          type: number
+          description: Đơn giá snapshot tại thời điểm đặt (VND)
+          example: 1590000.0
+        quantity:
+          type: integer
+          format: int32
+          description: Số lượng mua
+          example: 1
+        lineTotal:
+          type: number
+          description: Thành tiền của dòng sản phẩm (VND)
+          example: 1590000.0
+    OrderResponseV2:
+      type: object
+      description: Thông tin chi tiết đơn hàng (Public Spec V2 - Chuẩn hóa tiền tệ
+        đa quốc gia)
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: ID nội bộ
+          example: 1
+        code:
+          type: string
+          description: Mã đơn hàng định dạng nghiệp vụ
+          example: ORD-2026-000123
+        customerId:
+          type: integer
+          format: int64
+          description: ID khách hàng
+          example: 1
+        status:
+          type: string
+          description: Trạng thái đơn hàng
+          enum:
+          - PENDING
+          - CONFIRMED
+          - SHIPPING
+          - DELIVERED
+          - CANCELLED
+          - RETURN_REQUESTED
+          - RETURNED
+          example: CONFIRMED
+        shippingAddress:
+          type: string
+          description: Địa chỉ nhận hàng
+          example: "Toà nhà FPT, Cầu Giấy, Hà Nội"
+        total:
+          $ref: "#/components/schemas/MoneyResponse"
+          description: Tổng tiền đơn hàng kèm đơn vị tiền tệ
+        payment:
+          $ref: "#/components/schemas/PaymentResponse"
+          description: Thông tin thanh toán
+        items:
+          type: array
+          description: Danh sách sản phẩm trong đơn
+          items:
+            $ref: "#/components/schemas/OrderItemResponse"
+        version:
+          type: integer
+          format: int64
+          description: Phiên bản đơn hàng (phục vụ ETag & If-Match)
+          example: 0
+        deliveredAt:
+          type: string
+          format: date-time
+          description: Thời điểm giao hàng thành công (nếu có)
+        createdAt:
+          type: string
+          format: date-time
+          description: Thời điểm tạo đơn
+          example: 2026-10-25T10:00:00Z
+        updatedAt:
+          type: string
+          format: date-time
+          description: Thời điểm cập nhật gần nhất
+          example: 2026-10-25T10:05:00Z
+    PaymentResponse:
+      type: object
+      description: Thông tin thanh toán của đơn hàng
+      properties:
+        method:
+          type: string
+          description: Phương thức thanh toán
+          enum:
+          - COD
+          - CARD
+          - BANK_TRANSFER
+          example: COD
+        cardProvider:
+          type: string
+          description: Đơn vị cung cấp thẻ
+          example: Visa
+        cardLast4:
+          type: string
+          description: 4 chữ số cuối của thẻ
+          example: "4242"
+        bankCode:
+          type: string
+          description: Mã ngân hàng
+          example: VCB
+        transferRef:
+          type: string
+          description: Mã tham chiếu giao dịch
+          example: REF-20261025-001
+    ApiProblem:
+      type: object
+      description: Chuẩn phản hồi lỗi chi tiết RFC 9457 (ProblemDetail mở rộng)
+      properties:
+        type:
+          type: string
+          description: URI nhận diện loại lỗi
+          example: https://api.example.com/errors/validation
+        title:
+          type: string
+          description: Tiêu đề ngắn gọn của lỗi
+          example: Validation failed
+        status:
+          type: integer
+          format: int32
+          description: Mã trạng thái HTTP tương ứng
+          example: 400
+        code:
+          type: string
+          description: Mã lỗi nghiệp vụ của hệ thống TechShop
+          example: INVALID_INPUT
+        detail:
+          type: string
+          description: Mô tả chi tiết nguyên nhân gây lỗi
+          example: Dữ liệu yêu cầu không hợp lệ.
+        instance:
+          type: string
+          description: Đường dẫn endpoint phát sinh lỗi
+          example: /api/orders
+        timestamp:
+          type: string
+          format: date-time
+          description: Thời điểm xảy ra lỗi
+          example: 2026-10-25T11:00:00Z
+        errors:
+          type: array
+          description: Danh sách chi tiết các trường vi phạm validation (nếu có)
+          items:
+            type: object
+            additionalProperties:
+              type: string
+    TransitionRequest:
+      type: object
+      description: Yêu cầu thực hiện hành động chuyển trạng thái đơn hàng
+      properties:
+        action:
+          type: string
+          description: "Hành động chuyển trạng thái được phép theo ma trận phân quyề\
+            n: CONFIRM (ADMIN), CANCEL (CUSTOMER/ADMIN), SHIP (ADMIN/PARTNER), DELIVER\
+            \ (PARTNER), FAIL_DELIVERY (PARTNER), REQUEST_RETURN (CUSTOMER <= 7 ngà\
+            y), ACCEPT_RETURN (ADMIN)"
+          enum:
+          - CONFIRM
+          - CANCEL
+          - SHIP
+          - DELIVER
+          - FAIL_DELIVERY
+          - REQUEST_RETURN
+          - ACCEPT_RETURN
+          example: CONFIRM
+        reason:
+          type: string
+          description: Lý do chuyển trạng thái (bắt buộc đối với hành động CANCEL
+            khi đơn ở trạng thái CONFIRMED)
+          example: Khách hàng đổi ý mua sản phẩm khác
+          maxLength: 500
+          minLength: 0
+      required:
+      - action
+    InvoiceResponse:
+      type: object
+      description: Kết quả tải lên hóa đơn PDF
+      properties:
+        orderCode:
+          type: string
+          description: Mã đơn hàng
+          example: ORD-2026-000123
+        fileName:
+          type: string
+          description: Tên tập tin hóa đơn
+          example: invoice-ORD-2026-000123.pdf
+        fileSize:
+          type: integer
+          format: int64
+          description: Dung lượng tập tin (bytes)
+          example: 204850
+        uploadedAt:
+          type: string
+          format: date-time
+          description: Thời điểm tải lên
+          example: 2026-10-25T11:00:00Z
+    OrderResponseV1:
+      type: object
+      description: Thông tin chi tiết đơn hàng (Public Spec V1 - Deprecated)
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: ID nội bộ
+          example: 1
+        code:
+          type: string
+          description: Mã đơn hàng
+          example: ORD-2026-000123
+        customerId:
+          type: integer
+          format: int64
+          description: ID khách hàng
+          example: 1
+        status:
+          type: string
+          description: Trạng thái đơn hàng
+          enum:
+          - PENDING
+          - CONFIRMED
+          - SHIPPING
+          - DELIVERED
+          - CANCELLED
+          - RETURN_REQUESTED
+          - RETURNED
+          example: CONFIRMED
+        shippingAddress:
+          type: string
+          description: Địa chỉ nhận hàng
+          example: "Toà nhà FPT, Cầu Giấy, Hà Nội"
+        totalAmount:
+          type: number
+          deprecated: true
+          description: "Tổng tiền đơn hàng dạng số (VND). Thuộc tính này đã bị Deprecated,\
+            \ vui lòng chuyển qua sử dụng spec v2 với đối tượng tiền tệ đa quốc gia."
+          example: 1590000.0
+        payment:
+          $ref: "#/components/schemas/PaymentResponse"
+          description: Thông tin thanh toán
+        items:
+          type: array
+          description: Danh sách sản phẩm trong đơn
+          items:
+            $ref: "#/components/schemas/OrderItemResponse"
+        version:
+          type: integer
+          format: int64
+          description: Phiên bản đơn hàng (phục vụ ETag & If-Match)
+          example: 0
+        createdAt:
+          type: string
+          format: date-time
+          description: Thời điểm tạo đơn
+          example: 2026-10-25T10:00:00Z
+        updatedAt:
+          type: string
+          format: date-time
+          description: Thời điểm cập nhật gần nhất
+          example: 2026-10-25T10:05:00Z
+    PageMetadata:
+      type: object
+      properties:
+        size:
+          type: integer
+          format: int32
+          description: Số bản ghi trên mỗi trang
+          example: 20
+        number:
+          type: integer
+          format: int32
+          description: Chỉ số trang hiện tại (bắt đầu từ 0)
+          example: 0
+        totalElements:
+          type: integer
+          format: int64
+          description: Tổng số lượng bản ghi thỏa mãn
+          example: 42
+        totalPages:
+          type: integer
+          format: int32
+          description: Tổng số trang
+          example: 3
+    PageResponseOrderResponseV2:
+      type: object
+      description: Vỏ bọc phản hồi phân trang chuẩn ổn định
+      properties:
+        content:
+          type: array
+          description: Danh sách bản ghi của trang hiện tại
+          items:
+            $ref: "#/components/schemas/OrderResponseV2"
+        page:
+          $ref: "#/components/schemas/PageMetadata"
+          description: Thông tin siêu dữ liệu phân trang
+    OrderEventResponse:
+      type: object
+      description: Nhật ký kiểm toán chuyển trạng thái đơn hàng
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: ID bản ghi sự kiện
+          example: 1
+        fromStatus:
+          type: string
+          description: Trạng thái trước khi chuyển
+          enum:
+          - PENDING
+          - CONFIRMED
+          - SHIPPING
+          - DELIVERED
+          - CANCELLED
+          - RETURN_REQUESTED
+          - RETURNED
+          example: PENDING
+        toStatus:
+          type: string
+          description: Trạng thái sau khi chuyển
+          enum:
+          - PENDING
+          - CONFIRMED
+          - SHIPPING
+          - DELIVERED
+          - CANCELLED
+          - RETURN_REQUESTED
+          - RETURNED
+          example: CONFIRMED
+        action:
+          type: string
+          description: Hành động thực thi
+          enum:
+          - CONFIRM
+          - CANCEL
+          - SHIP
+          - DELIVER
+          - FAIL_DELIVERY
+          - REQUEST_RETURN
+          - ACCEPT_RETURN
+          example: CONFIRM
+        actor:
+          type: string
+          description: Người hoặc hệ thống thực hiện
+          example: ADMIN
+        reason:
+          type: string
+          description: Lý do chuyển trạng thái (bắt buộc khi hủy đơn CONFIRMED)
+          example: Đã nhận thanh toán qua ngân hàng
+        createdAt:
+          type: string
+          format: date-time
+          description: Thời điểm ghi nhận
+          example: 2026-10-25T10:05:00Z
+  securitySchemes:
+    bearerAuth:
+      type: http
+      description: "Nhập Bearer JWT token dành cho CUSTOMER hoặc ADMIN (ví dụ: dev-customer-token,\
+        \ dev-admin-token)"
+      scheme: bearer
+      bearerFormat: JWT
+    partnerKey:
+      type: apiKey
+      description: "API Key header dành cho đối tác vận chuyển (mặc định: techshop-partner-shipping-secret-key-2026)"
+      name: X-Partner-Key
+      in: header
